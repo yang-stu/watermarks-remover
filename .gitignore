@@ -8,6 +8,8 @@
 !/hooks/**
 !/local-tools/
 !/local-tools/**
+!/docker/
+!/docker/**
 !/run.sh
 !/stop.sh
 !/.github/
