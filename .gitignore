@@ -6,6 +6,10 @@
 !/.claude-plugin/**
 !/hooks/
 !/hooks/**
+!/local-tools/
+!/local-tools/**
+!/run.sh
+!/stop.sh
 !/.github/
 !/.github/**
 !/benchmarks/
