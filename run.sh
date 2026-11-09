@@ -2,15 +2,17 @@
 # 启动 watermarks-remover（纯标准库，无需 Docker）
 #
 # 用法：
-#   ./run.sh              # 同时启动 API(8765) 和 网页界面(8780)
+#   ./run.sh              # 启动 API(8765) + 网页界面(8780) + 看门狗
 #   ./run.sh api          # 只启动 API
 #   ./run.sh ui           # 只启动 网页界面
+#   ./run.sh watchdog     # 只启动 看门狗（每 60s 检查链路，异常自动重启）
 #
 # 可用环境变量覆盖：
 #   PYTHON=/usr/bin/python3   指定解释器
 #   WATERMARKS_HOST / WATERMARKS_PORT      API 监听地址（默认 127.0.0.1:8765，仅本机；
 #                                          页面通过 UI 的 /api 代理访问，无需暴露）
 #   UI_HOST / UI_PORT                      界面监听地址（默认 0.0.0.0:8780，局域网可访问）
+#   NO_WATCHDOG=1                          启动 all 时不带看门狗（看门狗内部调用时使用）
 #
 # 启动方式说明：用 local-tools/detach.py 做「双重 fork + setsid」，
 # 新进程进入独立会话，不会被当前终端的进程组连带回收，关掉终端也能继续跑。
@@ -80,11 +82,32 @@ start_ui() {
   wait_http "http://$UI_HOST:$UI_PORT/" "界面 ($UI_PORT)" "$LOG_DIR/ui.log"
 }
 
+start_watchdog() {
+  local watch="$DIR/local-tools/watchdog.sh"
+  if [ -f "$LOG_DIR/watchdog.pid" ] && kill -0 "$(cat "$LOG_DIR/watchdog.pid")" 2>/dev/null; then
+    echo "看门狗已在运行 (PID $(cat "$LOG_DIR/watchdog.pid" 2>/dev/null))"
+    return 0
+  fi
+  echo "启动 看门狗（每 60s 检查链路）"
+  "$PY" "$DETACH" --pid "$LOG_DIR/watchdog.pid" --log "$LOG_DIR/watchdog.out.log" -- \
+    bash "$watch" --loop
+  echo "  ✓ 看门狗已启动 (PID $(cat "$LOG_DIR/watchdog.pid" 2>/dev/null))"
+}
+
 case "$TARGET" in
   api) start_api ;;
   ui)  start_ui ;;
-  all) start_api; start_ui ;;
-  *)   die "未知参数 '$TARGET'，可用：api | ui | all" ;;
+  watchdog) start_watchdog ;;
+  all)
+    start_api
+    start_ui
+    if [ "${NO_WATCHDOG:-0}" = "1" ]; then
+      echo "跳过看门狗（NO_WATCHDOG=1）"
+    else
+      start_watchdog
+    fi
+    ;;
+  *)   die "未知参数 '$TARGET'，可用：api | ui | watchdog | all" ;;
 esac
 
 echo
