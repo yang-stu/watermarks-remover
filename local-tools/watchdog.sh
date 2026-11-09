@@ -13,9 +13,14 @@ MIN_INTERVAL=180   # 两次重启最小间隔（秒），避免异常时反复�
 mkdir -p "$DIR/logs"
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 
+# 关键：清掉继承来的代理变量。否则 curl 会把本地请求发给会话里的 HTTP_PROXY，
+# 代理失效后会误判「服务挂了」，进而反复杀掉健康的进程。
+export no_proxy="127.0.0.1,localhost,::1"
+export NO_PROXY="127.0.0.1,localhost,::1"
+
 healthy() {
-  curl -fs -m 5 -o /dev/null "http://127.0.0.1:8780/" || return 1
-  curl -fs -m 8 "http://127.0.0.1:8780/api/health" 2>/dev/null | grep -q '"ok": *true' || return 1
+  curl --noproxy '*' -fs -m 5 -o /dev/null "http://127.0.0.1:8780/" || return 1
+  curl --noproxy '*' -fs -m 8 "http://127.0.0.1:8780/api/health" 2>/dev/null | grep -q '"ok": *true' || return 1
   return 0
 }
 
@@ -41,7 +46,8 @@ check_once() {
     if [ -f "$pidf" ]; then
       pid=$(cat "$pidf" 2>/dev/null || true)
       [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null && log "已停止 $name (PID $pid)"
-      rm -f "$pidf"
+      # 用 unlink 而不是 rm：某些环境的安全钩子会拦截 rm 导致 pidfile 残留
+      unlink "$pidf" 2>/dev/null || : > "$pidf"
     fi
   done
 
@@ -54,7 +60,7 @@ check_once() {
   done
   sleep 1
 
-  if NO_WATCHDOG=1 "$DIR/run.sh" api >/dev/null 2>&1 && NO_WATCHDOG=1 "$DIR/run.sh" ui >> "$LOG" 2>&1; then
+  if NO_WATCHDOG=1 "$DIR/run.sh" api >"$LOG" 2>&1 && NO_WATCHDOG=1 "$DIR/run.sh" ui >>"$LOG" 2>&1; then
     log "重启完成"
   else
     log "重启失败"

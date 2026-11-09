@@ -49,7 +49,8 @@ already_running() {
 wait_http() {
   local url="$1" name="$2" log="$3"
   for _ in $(seq 1 40); do
-    curl -fs -m 2 "$url" >/dev/null 2>&1 && { echo "  ✓ $name 就绪"; return 0; }
+    # --noproxy：避免继承来的 HTTP_PROXY 把本地探测发给失效代理，造成误判
+    curl --noproxy '*' -fs -m 2 "$url" >/dev/null 2>&1 && { echo "  ✓ $name 就绪"; return 0; }
     sleep 0.25
   done
   echo "  ✗ $name 启动失败，日志尾部：" >&2
