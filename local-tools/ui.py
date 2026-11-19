@@ -49,23 +49,41 @@ BACK_LINK = (
 ).encode("utf-8")
 
 
-def load_studio() -> bytes | None:
-    """读取像素工作台页面并注入返回入口。
+_STUDIO_CACHE: bytes | None = None       # 已注入返回链接的最终页面
+_STUDIO_CACHE_MTIME: float = 0.0
 
-    每次请求现读，改源文件刷新即可生效；返回链接是注入的，
-    不改动原始 HTML，避免副本与源文件分叉。
-    """
-    try:
-        with open(STUDIO_PATH, "rb") as fh:
-            body = fh.read()
-    except OSError as exc:
-        print(f"[ui] 读取像素工作台失败 path={STUDIO_PATH!r} err={exc!r}", flush=True)
-        return None
-    marker = b"</body>"
-    idx = body.rfind(marker)
+
+def _with_back_link(body: bytes) -> bytes:
+    """在 </body> 前注入返回入口，不改动原始 HTML 文件。"""
+    idx = body.rfind(b"</body>")
     if idx == -1:
         return body + BACK_LINK
     return body[:idx] + BACK_LINK + body[idx:]
+
+
+def load_studio() -> bytes | None:
+    """读取像素工作台页面（内存缓存 + 热更新 + 文件代理失效降级）。
+
+    守护进程脱离启动会话后，沙箱的文件访问代理可能失效，此时 open() 会抛
+    _BrokerProtocolError 而不是 FileNotFoundError。因此首次成功读取后把页面
+    缓存到内存；之后请求仍尝试按 mtime 刷新（改源文件即时生效），刷新失败时
+    退回缓存，保证 /studio 不会因为代理失效而 404。
+    """
+    global _STUDIO_CACHE, _STUDIO_CACHE_MTIME
+    try:
+        mtime = os.stat(STUDIO_PATH).st_mtime
+        if _STUDIO_CACHE is not None and mtime == _STUDIO_CACHE_MTIME:
+            return _STUDIO_CACHE
+        with open(STUDIO_PATH, "rb") as fh:
+            body = fh.read()
+    except Exception as exc:  # noqa: BLE001 - 沙箱代理异常不是 OSError 子类
+        if _STUDIO_CACHE is None:
+            print(f"[ui] 读取像素工作台失败 path={STUDIO_PATH!r} err={exc!r}", flush=True)
+            return None
+        return _STUDIO_CACHE
+    _STUDIO_CACHE = _with_back_link(body)
+    _STUDIO_CACHE_MTIME = mtime
+    return _STUDIO_CACHE
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -983,6 +1001,10 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"警告：连不上上游 {TARGET}（{exc}）", file=sys.stderr)
         print("      界面仍会启动，但检测/清理会失败。请先运行 ./run.sh", file=sys.stderr)
+
+    # 启动时预热工作台缓存：此刻文件访问代理仍有效，避免守护化后代读不到文件
+    if load_studio() is None:
+        print("警告：像素工作台页面加载失败，/studio 不可用", file=sys.stderr)
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     srv.daemon_threads = True

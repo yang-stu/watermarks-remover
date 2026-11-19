@@ -60,6 +60,19 @@ def main() -> int:
         os._exit(0)
 
     # 孙进程：真正干活的那个，重定向 stdio 后 exec
+    #
+    # 关键：清除沙箱代理相关的环境变量。守护进程会长期存活并跨会话运行，
+    # 若继承这些变量，其文件访问/子进程启动会继续走沙箱 broker；一旦启动它的
+    # 会话结束，broker 的 execution attempt 关闭，守护进程读文件会抛
+    # _BrokerProtocolError、启动子进程会报 "Brokered program policy check
+    # unavailable"。清掉后走原生系统调用，不再依赖会话生命周期。
+    for key in list(os.environ):
+        if key.startswith(("CODEBUDDY_", "SANDBOX_", "WORKBUDDY_")) or key in (
+            "BASH_ENV",
+            "X-Client-Product",
+        ):
+            os.environ.pop(key, None)
+
     try:
         null_in = os.open(os.devnull, os.O_RDONLY)
         os.dup2(null_in, 0)
