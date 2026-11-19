@@ -58,7 +58,8 @@ def load_studio() -> bytes | None:
     try:
         with open(STUDIO_PATH, "rb") as fh:
             body = fh.read()
-    except OSError:
+    except OSError as exc:
+        print(f"[ui] 读取像素工作台失败 path={STUDIO_PATH!r} err={exc!r}", flush=True)
         return None
     marker = b"</body>"
     idx = body.rfind(marker)
